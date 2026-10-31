@@ -20,9 +20,10 @@ configure_logging()
 log = get_logger(__name__)
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QLocale
 
 from src.core.config import config
+from src.core.i18n import I18nManager, i18n as i18n_module
 from src.ui.main_window import MainWindow
 from src.ui.theme import apply_theme
 
@@ -56,11 +57,16 @@ def main() -> int:
     app.setOrganizationName("PythonTutor")
     app.setOrganizationDomain("pythontutor.app")
 
+    # Initialize i18n (loads system locale translation if available)
+    global i18n
+    i18n = I18nManager(app)
+    i18n.load_translations()
+
     # One shared config instance: the UI and the request worker must agree on
     # the API key, endpoint and model.
     apply_theme(app)
 
-    log.info("Starting Python Tutor", version="2.0.0")
+    log.info("Starting Python Tutor", version="2.0.0", locale=QLocale.system().name())
     window = MainWindow(config)
     window.show()
 
