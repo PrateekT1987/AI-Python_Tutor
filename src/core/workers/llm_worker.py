@@ -10,6 +10,9 @@ from PyQt6.QtCore import QThread, QObject, pyqtSignal
 import requests
 
 from src.core.config import config
+from src.core.logging_setup import get_logger
+
+log = get_logger(__name__)
 
 
 class Cancelled(Exception):
@@ -50,6 +53,7 @@ class LLMWorker(QObject):
         self._text = ""
 
     def cancel(self):
+        log.info("LLM streaming cancelled by user")
         self._cancelled = True
 
     def run(self):
@@ -57,6 +61,7 @@ class LLMWorker(QObject):
         self._text = ""
         flag = {"truncated": False}
 
+        log.info("Starting LLM stream", model=self.model, temp=self.temperature, max_tokens=self.max_tokens)
         try:
             for token in self._stream_chat(self.messages, flag):
                 if self._cancelled:
@@ -65,9 +70,11 @@ class LLMWorker(QObject):
                 self._text += token
                 self.token_received.emit(token)
         except Cancelled:
+            log.info("LLM stream cancelled")
             self.cancelled.emit()
             return
         except Exception as exc:
+            log.error("LLM stream error", error=str(exc))
             if len(self._text.strip()) >= 40:
                 self.finished.emit(self._text, True)
                 return
@@ -75,6 +82,7 @@ class LLMWorker(QObject):
             return
 
         if not self._text.strip():
+            log.warning("LLM returned empty response")
             self.error.emit("model returned an empty response")
             return
 
@@ -90,6 +98,7 @@ class LLMWorker(QObject):
                 {"role": "user", "content": "Continue exactly where you left off."},
             ]
             flag = {"truncated": False}
+            log.info("Auto-continuing truncated response", round=rounds)
             self.status.emit("Response was cut off — continuing…")
             try:
                 for token in self._stream_chat(cont_messages, flag):
@@ -101,10 +110,12 @@ class LLMWorker(QObject):
             except Cancelled:
                 self.cancelled.emit()
                 return
-            except Exception:
+            except Exception as exc:
+                log.warning("Continuation failed", error=str(exc))
                 flag["truncated"] = True
                 break
 
+        log.info("LLM stream finished", truncated=flag["truncated"], chars=len(self._text))
         self.finished.emit(self._text, self._looks_truncated(self._text, flag["truncated"]))
 
     def _looks_truncated(self, text: str, truncated: bool = False) -> bool:
@@ -178,6 +189,7 @@ class LLMWorker(QObject):
 
             yielded = False
             try:
+                log.debug("Sending request to OpenRouter", attempt=attempt, url=config.chat_completions_url)
                 with requests.post(
                     config.chat_completions_url,
                     json=payload,
@@ -187,17 +199,20 @@ class LLMWorker(QObject):
                 ) as resp:
                     status = resp.status_code
                     if status in (401, 403):
+                        log.error("Authentication failed", status=status)
                         raise ApiError(
                             "authentication failed - check OPENROUTER_API_KEY "
                             "in Settings (Ctrl+,)"
                         )
                     if status == 429:
+                        log.warning("Rate limited", status=status)
                         raise ApiError(
                             "rate limited",
                             retryable=True,
                             retry_after=self._retry_after(resp.headers.get("Retry-After")),
                         )
                     if status >= 500:
+                        log.error("Server error", status=status)
                         raise ApiError(
                             f"OpenRouter returned HTTP {status}",
                             retryable=True,
@@ -205,6 +220,7 @@ class LLMWorker(QObject):
                         )
                     if status >= 400:
                         detail = resp.text.strip().replace("\n", " ")[:160]
+                        log.error("Client error", status=status, detail=detail)
                         raise ApiError(f"OpenRouter returned HTTP {status}: {detail}")
 
                     for piece in self._iter_sse(resp, flag):
@@ -216,9 +232,11 @@ class LLMWorker(QObject):
                 raise
             except requests.RequestException as exc:
                 if yielded or attempt >= self.MAX_RETRIES:
+                    log.error("Network error after retries", error=str(exc), attempts=attempt + 1)
                     raise RuntimeError(f"network error: {exc}") from exc
                 delay = min(self.RETRY_BASE_SECONDS * (2 ** attempt), 10.0)
                 detail = str(exc).splitlines()[0][:80]
+                log.warning("Connection problem, retrying", error=detail, delay=delay, attempt=attempt + 1)
                 self.status.emit(
                     f"Connection problem ({detail}) — retrying in {delay:.0f}s "
                     f"(attempt {attempt + 2}/{self.MAX_RETRIES + 1})…"
@@ -228,9 +246,11 @@ class LLMWorker(QObject):
 
             except ApiError as exc:
                 if not exc.retryable or yielded or attempt >= self.MAX_RETRIES:
+                    log.error("API error (non-retryable or max retries)", error=str(exc), retryable=exc.retryable)
                     raise
                 delay = max(self.RETRY_BASE_SECONDS * (2 ** attempt), exc.retry_after)
                 detail = str(exc).splitlines()[0][:80]
+                log.warning("Provider busy, retrying", error=detail, delay=delay, attempt=attempt + 1)
                 self.status.emit(
                     f"Provider busy ({detail}) — retrying in {delay:.0f}s "
                     f"(attempt {attempt + 2}/{self.MAX_RETRIES + 1})…"
@@ -240,9 +260,11 @@ class LLMWorker(QObject):
 
             except Exception as exc:
                 if yielded or attempt >= self.MAX_RETRIES:
+                    log.exception("Unexpected error in stream chat")
                     raise
                 delay = self.RETRY_BASE_SECONDS * (2 ** attempt)
                 detail = str(exc).splitlines()[0][:80]
+                log.warning("Provider busy, retrying", error=detail, delay=delay, attempt=attempt + 1)
                 self.status.emit(
                     f"Provider busy ({detail}) — retrying in {delay:.0f}s "
                     f"(attempt {attempt + 2}/{self.MAX_RETRIES + 1})…"
@@ -300,24 +322,33 @@ class ConnectionTestThread(QThread):
     def run(self):
         base = self.base_url.rstrip("/")
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        log.info("Testing connection", base_url=base, has_key=bool(self.api_key))
         try:
             resp = requests.get(f"{base}/auth/key", headers=headers, timeout=(5, 10))
             if resp.status_code == 200:
+                log.info("Connection test passed", status=200)
                 self.result.emit(True, "Connection OK — API key accepted.")
                 return
             if resp.status_code in (401, 403):
+                log.warning("Connection test: auth rejected", status=resp.status_code)
                 self.result.emit(False, "API key rejected (HTTP 401/403).")
                 return
             if resp.status_code == 404:
                 # Some OpenRouter-compatible servers do not expose /auth/key.
+                log.info("Auth endpoint not found, trying /models")
                 check = requests.get(f"{base}/models", headers=headers, timeout=(5, 10))
                 if check.status_code == 200:
+                    log.info("Connection test passed via /models")
                     self.result.emit(True, "Server reachable (key could not be verified).")
                 elif check.status_code in (401, 403):
+                    log.warning("Connection test: auth rejected via /models")
                     self.result.emit(False, "API key rejected.")
                 else:
+                    log.warning("Connection test: unexpected status", status=check.status_code)
                     self.result.emit(False, f"Server returned HTTP {check.status_code}.")
                 return
+            log.warning("Connection test: unexpected status", status=resp.status_code)
             self.result.emit(False, f"Server returned HTTP {resp.status_code}.")
         except requests.RequestException as exc:
+            log.error("Connection test: network error", error=str(exc))
             self.result.emit(False, f"Network error: {exc}")

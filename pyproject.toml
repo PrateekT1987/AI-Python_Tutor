@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "python-tutor"
 version = "2.0.0"
-description = "Interactive Python tutor with PyQt6 - markdown rendering, syntax highlighting, code execution"
+description = "Interactive Python learning with PyQt6 and OpenRouter"
 readme = "README.md"
-requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Prateek T", email = "prateekt1987@gmail.com"}]
-keywords = ["python", "tutor", "education", "pyqt6", "markdown", "syntax-highlighting"]
+authors = [{name = "PrateekT1987", email = "prateekt87@example.com"}]
+maintainers = [{name = "PrateekT1987", email = "prateekt87@example.com"}]
+keywords = ["python", "tutor", "llm", "openrouter", "pyqt6", "education"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: Qt",
@@ -20,33 +20,80 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Education",
-    "Topic :: Text Editors :: Text Processing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+requires-python = ">=3.10"
 dependencies = [
     "pyqt6>=6.6.0",
     "requests>=2.31.0",
     "markdown>=3.5",
     "pygments>=2.17",
     "python-dotenv>=1.0",
+    "structlog>=24.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
     "pytest-qt>=4.4",
-    "ruff>=0.1.0",
-    "mypy>=1.7",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "bandit>=1.7",
 ]
 
-[project.scripts]
-python-tutor = "src.main:main"
+[project.entry-points]
+gui_scripts = [
+    "python-tutor = src.main:main",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["python_tutor*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+select = ["E", "F", "I", "UP", "BLE", "B", "C4", "DTZ", "T20", "SIM", "ARG", "PTH", "ERA", "PL", "TRY", "NPY", "RUF", "RET"]
+ignore = ["S101", "S311"]
+extend-ignore = ["E501", "B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_optional = true
+show_error_codes = true
+namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = "PyQt6.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pygments.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --tb=short"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101", "B601"]

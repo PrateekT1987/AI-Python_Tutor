@@ -49,6 +49,10 @@ _SECRET_ENV_VARS = (
     "ANTHROPIC_API_KEY",
 )
 
+from src.core.logging_setup import get_logger
+
+log = get_logger(__name__)
+
 
 class MessageBubble(QFrame):
     """A chat message bubble with markdown rendering.
@@ -425,8 +429,11 @@ class MessageBubble(QFrame):
         if not (0 <= index < len(self._code_blocks)) or index in self._running_blocks:
             return
 
+        log.info("Code run requested", index=index, chars=len(self._code_blocks[index]))
+
         workdir = QTemporaryDir()
         if not workdir.isValid():
+            log.error("Failed to create temporary directory for code execution")
             self._set_output(index, "Could not create a temporary directory.")
             return
 
@@ -434,6 +441,7 @@ class MessageBubble(QFrame):
         try:
             script.write_text(self._code_blocks[index], encoding="utf-8")
         except OSError as exc:
+            log.error("Failed to write script", error=str(exc))
             workdir.remove()
             self._set_output(index, f"Could not write the script: {exc}")
             return
@@ -489,6 +497,7 @@ class MessageBubble(QFrame):
             output = "(no output)"
         if exit_code != 0:
             output += f"\n\n[exit code {exit_code}]"
+        log.info("Code execution finished", index=index, exit_code=exit_code, output_chars=len(output))
         self._set_output(index, output)
         self.status_message.emit(
             "Code finished" if exit_code == 0 else f"Code exited with status {exit_code}"
@@ -498,14 +507,18 @@ class MessageBubble(QFrame):
         if error == QProcess.ProcessError.FailedToStart:
             process = self._processes.get(index)
             detail = process.errorString() if process is not None else "unknown error"
+            log.error("Code process failed to start", index=index, error=detail)
             self._cleanup_run(index)
             self._set_output(index, f"Could not start Python: {detail}")
+        else:
+            log.warning("Code process error", index=index, error=error.name)
         # Crashed / Timedout / WriteError are reported through finished().
 
     def _on_run_timeout(self, index: int):
         process = self._processes.get(index)
         if process is None:
             return
+        log.warning("Code execution timed out, killing process", index=index)
         process.kill()
         self._cleanup_run(index)
         seconds = max(1, round(self.RUN_TIMEOUT_MS / 1000))
@@ -526,6 +539,8 @@ class MessageBubble(QFrame):
 
     def shutdown_runs(self):
         """Kill any running child processes (used when the window closes)."""
+        if self._processes:
+            log.info("Shutting down running code processes", count=len(self._processes))
         for process in list(self._processes.values()):
             process.kill()
             process.waitForFinished(500)

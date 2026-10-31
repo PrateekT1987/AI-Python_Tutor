@@ -28,10 +28,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.core.logging_setup import get_logger
 from src.core.settings import clear_session, fit_messages, load_session, save_session
 from src.core.workers import ConnectionTestThread, LLMThread
 from src.prompts import STARTERS, build_system_prompt
 from src.ui.widgets import InputArea, LevelSelector, MessageBubble, ScratchpadWidget
+
+log = get_logger(__name__)
 
 
 class SettingsDialog(QDialog):
@@ -554,6 +557,7 @@ class MainWindow(QMainWindow):
 
     def _on_send(self, text: str | None = None):
         if self._is_busy():
+            log.warning("Send attempted while busy")
             self.set_status("Please wait for the current answer (or press Stop).")
             return
 
@@ -564,8 +568,10 @@ class MainWindow(QMainWindow):
             return
 
         if not self.config.openrouter_api_key:
+            log.warning("Send attempted without API key")
             self.set_status("No API key configured — open Settings (Ctrl+,) if the request fails.")
 
+        log.info("User message sent", chars=len(text), preview=text[:80])
         self.starters_widget.hide()
         self.history.append({"role": "user", "content": text})
         self._add_message("user", text)
@@ -599,6 +605,7 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self._on_thread_finished)
         self.llm_thread = thread
         self._threads.add(thread)
+        log.info("LLM request started", model=self.config.model, history_len=len(self.history))
         thread.start()
 
     @pyqtSlot(str)
@@ -650,11 +657,13 @@ class MainWindow(QMainWindow):
             self.history.append({"role": "assistant", "content": text})
             save_session(self.history)
             self._finish_assistant_bubble(text)
+            log.info("LLM response finished", chars=len(text), truncated=truncated)
             self.set_status(
                 "Answer reached the token limit — continue the conversation for more."
                 if truncated else "Ready"
             )
         else:
+            log.warning("LLM returned empty response")
             self._finish_assistant_bubble("")
             self.set_status("The model returned an empty response.")
 
@@ -683,6 +692,7 @@ class MainWindow(QMainWindow):
 
         bubble = self._add_message("assistant", message, retryable=can_retry)
         self._last_error_bubble = bubble
+        log.error("LLM request failed", error=error, can_retry=can_retry)
         self.set_status("Request failed")
         if "OPENROUTER_API_KEY" in error or "authentication" in error.lower():
             self.set_status("Authentication failed — set your API key in Settings (Ctrl+,)")
@@ -698,14 +708,17 @@ class MainWindow(QMainWindow):
             self.history.append({"role": "assistant", "content": partial})
             save_session(self.history)
             self._finish_assistant_bubble(partial)
+            log.info("LLM stream cancelled, partial saved", chars=len(partial))
         else:
             self._finish_assistant_bubble("")
             self._add_message("assistant", "*(stopped)*", scroll=False)
+            log.info("LLM stream cancelled, no partial content")
         self.set_status("Stopped")
         self._scroll_to_bottom(force=True)
 
     def _on_stop(self):
         if self._request_active and self.llm_thread is not None:
+            log.info("Stop requested by user")
             self.llm_thread.cancel()
             self.set_status("Stopping…")
 
@@ -717,8 +730,10 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
         if not any(m["role"] == "user" for m in self.history):
+            log.warning("Retry requested but no user message in history")
             self.set_status("Nothing to retry.")
             return
+        log.info("Retrying last request")
         # Drop the failed request's bubbles (error notice and any unpersisted
         # partial answer), then ask again using the existing history.
         self._remove_bubble(self._last_error_bubble)
@@ -735,6 +750,7 @@ class MainWindow(QMainWindow):
             self.llm_thread = None
         if isinstance(thread, LLMThread):
             self._threads.discard(thread)
+            log.debug("LLM thread finished and cleaned up")
             thread.deleteLater()
 
     # -- scratchpad ------------------------------------------------------
@@ -782,6 +798,7 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        log.info("Starting new session")
         self.history.clear()
         clear_session()
         self._clear_messages()
@@ -813,8 +830,10 @@ class MainWindow(QMainWindow):
 
         try:
             Path(path).write_text("\n".join(lines), encoding="utf-8")
+            log.info("Transcript exported", path=path)
             self.set_status(f"Exported to {Path(path).name}")
         except OSError as exc:
+            log.error("Export failed", error=str(exc))
             QMessageBox.critical(self, "Export Failed", str(exc))
 
     # -- settings --------------------------------------------------------
@@ -881,11 +900,13 @@ class MainWindow(QMainWindow):
             self._close_deadline = time.monotonic() + 4.0
             for thread in running:
                 thread.cancel()
+            log.info("Close requested, cancelling running threads", count=len(running))
             self.set_status("Stopping the current answer before closing…")
             event.ignore()
             QTimer.singleShot(100, self._close_when_idle)
             return
 
+        log.info("Saving window state and closing")
         self._save_window_state()
         event.accept()
 
@@ -896,6 +917,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(100, self._close_when_idle)
                 return
             # Last resort: don't leave a QThread running while the app exits.
+            log.warning("Force terminating threads after deadline", count=len(running))
             for thread in running:
                 thread.terminate()
                 thread.wait(500)
@@ -908,6 +930,8 @@ class MainWindow(QMainWindow):
         save_session(self.history)
         self.config.geometry = self.saveGeometry()
         self.config.window_state = self.saveState()
+        self.config.save()
+        log.debug("Window state saved")
         self.config.save()
 
 
