@@ -36,3 +36,4 @@ htmlcov/
 *.tmp
 *.temp
 .env
+*.md
