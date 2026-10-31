@@ -1,5 +1,7 @@
 """Core functionality for Python Tutor."""
 
+from __future__ import annotations
+
 from .config import config, Config
 from .settings import load_settings, save_settings, load_session, save_session, clear_session, fit_messages
 from .workers import LLMWorker, LLMThread, Cancelled

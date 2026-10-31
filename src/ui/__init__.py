@@ -1,5 +1,7 @@
 """UI package for Python Tutor."""
 
+from __future__ import annotations
+
 from .main_window import MainWindow
 from .widgets import (
     MessageBubble,
@@ -9,6 +11,8 @@ from .widgets import (
     LevelSelector,
     PythonHighlighter,
     MarkdownHighlighter,
+    CodeEditor,
+    LineNumberArea,
 )
 
 __all__ = [
@@ -20,4 +24,6 @@ __all__ = [
     "LevelSelector",
     "PythonHighlighter",
     "MarkdownHighlighter",
+    "CodeEditor",
+    "LineNumberArea",
 ]

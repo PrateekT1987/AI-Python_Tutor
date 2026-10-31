@@ -1,4 +1,4 @@
-"""Custom widgets for the chat interface."""
+"""Message bubble with markdown rendering and code execution."""
 
 from __future__ import annotations
 
@@ -9,37 +9,35 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QProcess,
     QProcessEnvironment,
-    QRect,
-    QSize,
     QTemporaryDir,
     Qt,
     QTimer,
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import (
-    QColor,
-    QDesktopServices,
-    QFont,
-    QFontMetrics,
-    QKeySequence,
-    QPainter,
-    QShortcut,
-)
+from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
-    QPushButton,
     QSizePolicy,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from src.core.logging_setup import get_logger
+from src.core.parsers import (
+    parse_blocks,
+    parse_table,
+    render_table_html,
+    render_text_html,
+    escape_html,
+)
+
+log = get_logger(__name__)
 
 # Variables that must never leak into code the tutor asked us to run.
 _SECRET_ENV_VARS = (
@@ -48,10 +46,6 @@ _SECRET_ENV_VARS = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
 )
-
-from src.core.logging_setup import get_logger
-
-log = get_logger(__name__)
 
 
 class MessageBubble(QFrame):
@@ -215,7 +209,6 @@ class MessageBubble(QFrame):
         self._code_blocks = []
         if not keep_outputs:
             self._code_outputs.clear()
-        from src.core.parsers import parse_blocks, parse_table, render_table_html, render_text_html
 
         parts: list[str] = []
         for block in parse_blocks(content):
@@ -236,8 +229,6 @@ class MessageBubble(QFrame):
 
     def set_streaming_text(self, text: str):
         """Render in-progress text efficiently (plain text + cursor)."""
-        from src.core.parsers import escape_html
-
         self._streaming = True
         self.content = text
         self.copy_btn.setVisible(False)
@@ -259,7 +250,6 @@ class MessageBubble(QFrame):
         from pygments.lexers import get_lexer_by_name
         from pygments.lexers.special import TextLexer
         from pygments.util import ClassNotFound
-        from src.core.parsers import escape_html
 
         try:
             lexer = get_lexer_by_name(lang or "text", stripall=True)
@@ -268,8 +258,7 @@ class MessageBubble(QFrame):
 
         formatter = HtmlFormatter(style="monokai", noclasses=True, nowrap=True)
         highlighted = highlight(code, lexer, formatter)
-        label = (lang or "text").upper()
-        label = escape_html(label)
+        label = escape_html((lang or "text").upper())
 
         line_count = max(1, len(code.splitlines()))
         numbers = "\n".join(str(number) for number in range(1, line_count + 1))
@@ -302,6 +291,11 @@ class MessageBubble(QFrame):
         has_output = index in self._running_blocks or index in self._code_outputs
         body_margin = "0" if has_output else "0 0 10px 0"
 
+        # VS Code style: gutter slightly darker than code area, subtle right border.
+        gutter_bg = "#1E1E1E"
+        gutter_border = "#3C3C3C"
+        code_bg = "#282C34"
+
         # Measure the widest code line so we can pick table-layout:fixed (short)
         # or table-layout:auto (long) without clipping.
         fm = QFontMetrics(self.content_edit.font())
@@ -309,11 +303,6 @@ class MessageBubble(QFrame):
         for line in code.expandtabs(4).splitlines():
             longest_px = max(longest_px, fm.horizontalAdvance(line))
         code_width = longest_px + 24  # pre padding
-
-        # VS Code style: gutter slightly darker than code area, subtle right border.
-        gutter_bg = "#1E1E1E"
-        gutter_border = "#3C3C3C"
-        code_bg = "#282C34"
 
         if code_width <= self._available_width - 60:
             # Short enough for fixed table layout (cleaner look).
@@ -357,8 +346,6 @@ class MessageBubble(QFrame):
         running = index in self._running_blocks
         if not running and index not in self._code_outputs:
             return ""
-        from src.core.parsers import escape_html
-
         mono = "'JetBrains Mono','Fira Code','Consolas',monospace"
         if running:
             content = '<span style="color:#E5C07B;">Running in a Python subprocess…</span>'
@@ -553,8 +540,6 @@ class MessageBubble(QFrame):
         Assistant answers fill the column so every reply shares the same
         comfortable right edge; user messages hug their content.
         """
-        from PyQt6.QtGui import QFontMetrics
-
         self._available_width = max(self.MIN_WIDTH, int(available))
         target = min(self.MAX_WIDTH, self._available_width)
 
@@ -602,389 +587,3 @@ class MessageBubble(QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._adjust_height()
-
-
-class LineNumberArea(QWidget):
-    """Gutter that paints the line numbers for a :class:`CodeEditor`."""
-
-    def __init__(self, editor: "CodeEditor"):
-        super().__init__(editor)
-        self._editor = editor
-
-    def sizeHint(self) -> QSize:
-        return QSize(self._editor.line_number_area_width(), 0)
-
-    def paintEvent(self, event):
-        self._editor.paint_line_numbers(event)
-
-
-class CodeEditor(QPlainTextEdit):
-    """Code editor with a line-number gutter and no soft wrapping."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self._line_number_area = LineNumberArea(self)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.blockCountChanged.connect(self._update_line_number_area_width)
-        self.updateRequest.connect(self._update_line_number_area)
-        self._update_line_number_area_width(0)
-
-    def line_number_area_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
-        return 18 + self.fontMetrics().horizontalAdvance("9") * digits
-
-    def _update_line_number_area_width(self, _count: int):
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
-
-    def _update_line_number_area(self, rect: QRect, dy: int):
-        if dy:
-            self._line_number_area.scroll(0, dy)
-        else:
-            self._line_number_area.update(
-                0, rect.y(), self._line_number_area.width(), rect.height()
-            )
-        if rect.contains(self.viewport().rect()):
-            self._update_line_number_area_width(0)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        area = self.contentsRect()
-        self._line_number_area.setGeometry(
-            QRect(area.left(), area.top(), self.line_number_area_width(), area.height())
-        )
-
-    def paint_line_numbers(self, event):
-        painter = QPainter(self._line_number_area)
-        painter.fillRect(event.rect(), QColor("#1A1D22"))
-        painter.setPen(QColor("#8B93A1"))
-
-        block = self.firstVisibleBlock()
-        number = block.blockNumber()
-        offset = self.contentOffset()
-        top = round(self.blockBoundingGeometry(block).translated(offset).top())
-        bottom = top + round(self.blockBoundingRect(block).height())
-        text_height = self.fontMetrics().height()
-        text_width = self._line_number_area.width() - 8
-        flags = int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                painter.drawText(0, top, text_width, text_height, flags, str(number + 1))
-            block = block.next()
-            top = bottom
-            bottom = top + round(self.blockBoundingRect(block).height())
-            number += 1
-
-
-class ScratchpadWidget(QDialog):
-    """Scratchpad for free-form code experimentation."""
-
-    run_requested = pyqtSignal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Scratchpad")
-        self.setModal(False)
-        self.resize(760, 620)
-        self._setup_ui()
-        self._load_content()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        # Toolbar
-        toolbar = QHBoxLayout()
-        title = QLabel("Scratchpad")
-        title.setStyleSheet("font-weight: 600; font-size: 13px;")
-        toolbar.addWidget(title)
-        toolbar.addStretch()
-
-        self.ask_btn = QPushButton("Ask Tutor (Ctrl+Enter)")
-        self.ask_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.ask_btn.setAccessibleName("Ask the tutor about this code")
-        self.ask_btn.clicked.connect(self._emit_run)
-        toolbar.addWidget(self.ask_btn)
-
-        self.save_btn = QPushButton("Save")
-        self.save_btn.setAccessibleName("Save scratchpad")
-        self.save_btn.clicked.connect(self._save)
-        toolbar.addWidget(self.save_btn)
-
-        self.clear_btn = QPushButton("Clear")
-        self.clear_btn.setAccessibleName("Clear scratchpad")
-        self.clear_btn.clicked.connect(self._clear)
-        toolbar.addWidget(self.clear_btn)
-
-        self.close_btn = QPushButton("Close")
-        self.close_btn.clicked.connect(self.hide)
-        toolbar.addWidget(self.close_btn)
-
-        layout.addLayout(toolbar)
-
-        # Editor
-        self.editor = CodeEditor()
-        self.editor.setPlaceholderText("Paste or write Python here, then ask the tutor about it…")
-        self.editor.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #1E1E1E;
-                color: #E6E6E6;
-                border: 1px solid #3C3C3C;
-                border-radius: 4px;
-                font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-                font-size: 12px;
-                padding: 8px;
-            }
-        """)
-        layout.addWidget(self.editor, 1)
-
-        # Status line
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #8B93A1; font-size: 11px;")
-        layout.addWidget(self.status_label)
-
-        # Syntax highlighting
-        from src.ui.widgets.syntax_highlighter import PythonHighlighter
-        self.highlighter = PythonHighlighter(self.editor.document())
-
-        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.editor)
-        shortcut.activated.connect(self._emit_run)
-
-    def _emit_run(self):
-        code = self.editor.toPlainText().strip()
-        if not code:
-            self.status_label.setText("Nothing to ask — the scratchpad is empty.")
-            return
-        self.status_label.setText("Sent to the tutor.")
-        self.run_requested.emit(code)
-
-    def _scratch_path(self):
-        from src.core.settings import config_dir
-        return config_dir() / "scratchpad.py"
-
-    def _load_content(self):
-        scratch_file = self._scratch_path()
-        if scratch_file.exists():
-            try:
-                self.editor.setPlainText(scratch_file.read_text(encoding="utf-8"))
-            except OSError:
-                pass
-
-    def _save(self):
-        scratch_file = self._scratch_path()
-        try:
-            scratch_file.write_text(self.editor.toPlainText(), encoding="utf-8")
-            self.status_label.setText(f"Saved to {scratch_file}")
-        except OSError as exc:
-            self.status_label.setText(f"Could not save: {exc}")
-
-    def _clear(self):
-        self.editor.clear()
-        self.status_label.setText("Scratchpad cleared.")
-        self._save()
-
-
-class ChatInput(QPlainTextEdit):
-    """Multi-line input: Enter sends, Shift+Enter inserts a line break."""
-
-    submit_requested = pyqtSignal()
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                self.submit_requested.emit()
-                event.accept()
-                return
-        super().keyPressEvent(event)
-
-
-class InputArea(QWidget):
-    """Input area with integrated Run/Stop buttons."""
-
-    send_requested = pyqtSignal(str)
-    stop_requested = pyqtSignal()
-
-    MIN_HEIGHT = 42
-    MAX_HEIGHT = 132
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
-
-        # Input entry (multi-line so code and tracebacks can be pasted)
-        self.input_entry = ChatInput()
-        self.input_entry.setPlaceholderText(
-            "Ask a question or paste code / an error message — Enter to send, Shift+Enter for a new line"
-        )
-        self.input_entry.setAccessibleName("Message input")
-        self.input_entry.setTabChangesFocus(True)
-        self.input_entry.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #1E1E1E;
-                color: #E0E0E0;
-                border: 1px solid #2D3139;
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-                font-size: 13px;
-            }
-            QPlainTextEdit:focus { border: 1px solid #61AFEF; }
-        """)
-        self.input_entry.setFixedHeight(self.MIN_HEIGHT)
-        self.input_entry.document().setDocumentMargin(2)
-        self.input_entry.submit_requested.connect(self._on_send)
-        self.input_entry.textChanged.connect(self._update_height)
-        layout.addWidget(self.input_entry, 1)
-
-        # Run button
-        self.run_btn = QPushButton("Send")
-        self.run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.run_btn.setAccessibleName("Send message")
-        self.run_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #61AFEF;
-                color: #1E1E1E;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-family: 'JetBrains Mono', monospace;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover { background-color: #78C0F0; }
-            QPushButton:disabled { background-color: #3A3F4B; color: #7C8896; }
-        """)
-        self.run_btn.clicked.connect(self._on_send)
-        layout.addWidget(self.run_btn, 0, Qt.AlignmentFlag.AlignBottom)
-
-        # Stop button
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn.setAccessibleName("Stop generating")
-        self.stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #C45A4A;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 16px;
-                font-family: 'JetBrains Mono', monospace;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover { background-color: #D46A5A; }
-            QPushButton:disabled { background-color: #3A3F4B; color: #7C8896; }
-        """)
-        self.stop_btn.clicked.connect(self.stop_requested.emit)
-        layout.addWidget(self.stop_btn, 0, Qt.AlignmentFlag.AlignBottom)
-
-    def _update_height(self):
-        from PyQt6.QtGui import QFontMetrics
-
-        layout = self.input_entry.document().documentLayout()
-        # QPlainTextDocumentLayout reports the document height in wrapped
-        # lines, not pixels.
-        lines = max(1, round(layout.documentSize().height()))
-        line_height = QFontMetrics(self.input_entry.font()).lineSpacing()
-        height = int(min(max(lines * line_height + 24, self.MIN_HEIGHT), self.MAX_HEIGHT))
-        if self.input_entry.height() != height:
-            self.input_entry.setFixedHeight(height)
-
-    def _on_send(self):
-        text = self.input_entry.toPlainText().strip()
-        if not text:
-            return
-        self.send_requested.emit(text)
-        self.input_entry.clear()
-
-    def set_side_margins(self, side: int):
-        """Align the composer with the centred transcript column."""
-        layout = self.layout()
-        if layout is not None:
-            layout.setContentsMargins(side, 12, side, 12)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        QTimer.singleShot(0, self._update_height)
-
-    def set_loading(self, loading: bool):
-        self.run_btn.setEnabled(not loading)
-        self.stop_btn.setEnabled(loading)
-        self.input_entry.setEnabled(not loading)
-        if loading:
-            self.input_entry.setPlaceholderText("Thinking… (Stop to cancel)")
-        else:
-            self.input_entry.setPlaceholderText(
-                "Ask a question or paste code / an error message — Enter to send, Shift+Enter for a new line"
-            )
-            self.input_entry.setFocus()
-
-
-class LevelSelector(QWidget):
-    """Segmented control for difficulty level selection."""
-
-    level_changed = pyqtSignal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.current_level = "Intermediate"
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self.level_buttons = {}
-        for level in ["Beginner", "Intermediate", "Advanced"]:
-            btn = QPushButton(level)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setCheckable(True)
-            btn.setAccessibleName(f"{level} level")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2D2D2D;
-                    color: #ABB2BF;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    font-family: 'JetBrains Mono', monospace;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:checked { background-color: #61AFEF; color: #1E1E1F; }
-                QPushButton:hover:!checked { background-color: #3A3A3A; }
-            """)
-            btn.toggled.connect(lambda checked, lvl=level: self._on_level_changed(lvl, checked))
-            layout.addWidget(btn)
-            self.level_buttons[level] = btn
-
-        # Set initial state
-        self.level_buttons[self.current_level].setChecked(True)
-
-    def _on_level_changed(self, level: str, checked: bool):
-        if checked:
-            self.current_level = level
-            for lvl, btn in self.level_buttons.items():
-                if lvl != level:
-                    btn.blockSignals(True)
-                    btn.setChecked(False)
-                    btn.blockSignals(False)
-            self.level_changed.emit(level)
-
-    def set_level(self, level: str):
-        """Set the selected level without emitting ``level_changed``."""
-        if level not in self.level_buttons:
-            return
-        self.current_level = level
-        for lvl, btn in self.level_buttons.items():
-            btn.blockSignals(True)
-            btn.setChecked(lvl == level)
-            btn.blockSignals(False)

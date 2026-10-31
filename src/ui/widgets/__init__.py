@@ -1,20 +1,20 @@
 """UI widgets package."""
 
+from .code_editor import CodeEditor, LineNumberArea
+from .input_area import InputArea, ChatInput
+from .level_selector import LevelSelector
+from .message_bubble import MessageBubble
+from .scratchpad import ScratchpadWidget
 from .syntax_highlighter import PythonHighlighter, MarkdownHighlighter
-from .chat_widgets import (
-    MessageBubble,
-    ScratchpadWidget,
-    InputArea,
-    ChatInput,
-    LevelSelector,
-)
 
 __all__ = [
-    "PythonHighlighter",
-    "MarkdownHighlighter",
-    "MessageBubble",
-    "ScratchpadWidget",
+    "CodeEditor",
+    "LineNumberArea",
     "InputArea",
     "ChatInput",
     "LevelSelector",
+    "MessageBubble",
+    "ScratchpadWidget",
+    "PythonHighlighter",
+    "MarkdownHighlighter",
 ]
