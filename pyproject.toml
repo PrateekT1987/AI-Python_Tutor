@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-tutor"
+version = "2.0.0"
+description = "Interactive Python tutor with PyQt6 - markdown rendering, syntax highlighting, code execution"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Prateek T", email = "prateekt1987@gmail.com"}]
+keywords = ["python", "tutor", "education", "pyqt6", "markdown", "syntax-highlighting"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Text Editors :: Text Processing",
+]
+dependencies = [
+    "pyqt6>=6.6.0",
+    "requests>=2.31.0",
+    "markdown>=3.5",
+    "pygments>=2.17",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-qt>=4.4",
+    "ruff>=0.1.0",
+    "mypy>=1.7",
+]
+
+[project.scripts]
+python-tutor = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
