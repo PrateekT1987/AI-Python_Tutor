@@ -1,2 +1,0 @@
-[console_scripts]
-python-tutor = src.main:main
