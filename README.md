@@ -27,29 +27,28 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Configure
-cp .env.example .env
-# Edit .env with your OPENROUTER_API_KEY
-
 # Run
 python src/main.py
 ```
 
+On first launch, open **Settings (Ctrl+,)** and enter your OpenRouter API key and model. Settings are saved to `~/.config/python-tutor/config.json` (0600) and persist across restarts.
+
 ## Requirements
 
 - Python 3.10+
-- PyQt6, requests, python-dotenv, pygments
+- PyQt6, requests, python-dotenv, pygments, structlog
 
-## Configuration (`.env`)
+## Configuration
 
-```ini
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
-TAVILY_API_KEY=...  # optional, for future web search
-```
+All settings are managed through the **Settings** dialog (Ctrl+,):
 
-Settings entered in the **Settings** dialog (Ctrl+,) are saved to `~/.config/python-tutor/config.json` (0600) and take precedence over `.env` on restart.
+- **API Key** — Your OpenRouter API key (shown/hidden toggle)
+- **Model ID** — e.g., `nvidia/nemotron-3-ultra-550b-a55b:free`
+- **Base URL** — OpenRouter endpoint (default: `https://openrouter.ai/api/v1`)
+- **Temperature / Max Tokens** — Generation parameters
+- **Sandbox Memory / Network** — Reserved for future code execution sandbox
+
+Settings are stored in `~/.config/python-tutor/config.json` (owner-readable only) and take precedence over any environment variables.
 
 ## Keyboard Shortcuts
 
@@ -72,6 +71,7 @@ src/
 ├── core/
 │   ├── config.py           # Config dataclass, atomic 0600 save
 │   ├── settings.py         # Session/history JSON persistence
+│   ├── logging_setup.py    # Structured logging (structlog + stdlib)
 │   ├── parsers/            # Markdown → blocks → HTML
 │   └── workers/            # LLMThread, ConnectionTestThread, ApiError
 ├── ui/

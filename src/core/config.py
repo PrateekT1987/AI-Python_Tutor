@@ -42,7 +42,7 @@ class Config:
     MAX_CONTEXT_CHARS: int = 24000
     
     def __post_init__(self):
-        # Load .env file first
+        # Load environment variables first
         load_dotenv()
         # Load from environment
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
@@ -59,8 +59,8 @@ class Config:
         """Load saved settings.
 
         Saved values are treated as the user's explicit choices and win over
-        ``.env`` values, which only seed the defaults. This keeps edits made in
-        Settings (API key, model, endpoint) from silently reverting on restart.
+        environment defaults. This keeps edits made in Settings (API key, model,
+        endpoint) from silently reverting on restart.
         """
         if not self.config_path.exists():
             return
